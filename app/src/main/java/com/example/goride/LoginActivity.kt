@@ -25,16 +25,42 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.goride.ui.theme.GoRideTheme
+import com.google.firebase.auth.FirebaseAuth
 
 class LoginActivity : ComponentActivity() {
+
+    private val auth: FirebaseAuth by lazy { FirebaseAuth.getInstance() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Optional: if already logged in, go straight to Home
+        if (auth.currentUser != null) {
+            startActivity(Intent(this, HomeActivity::class.java))
+            finish()
+            return
+        }
+
         setContent {
             GoRideTheme {
                 LoginScreen(
-                    onLoginClick = {
-                        // TODO: Add navigation to Home screen later
+                    onLogin = { email, password, onResult ->
+                        auth.signInWithEmailAndPassword(email.trim(), password)
+                            .addOnCompleteListener { task ->
+                                if (task.isSuccessful) {
+                                    onResult(true, null)
+                                } else {
+                                    onResult(false, task.exception?.message ?: "Login failed")
+                                }
+                            }
+                    },
+                    onGoToSignUp = {
+                        startActivity(Intent(this, SignUpActivity::class.java))
+                    },
+                    onGoToHome = {
+                        startActivity(Intent(this, HomeActivity::class.java))
+                        finish()
                     }
                 )
             }
@@ -43,16 +69,39 @@ class LoginActivity : ComponentActivity() {
 }
 
 @Composable
-fun LoginScreen(onLoginClick: () -> Unit) {
-    // Form state
+fun LoginScreen(
+    onLogin: (email: String, password: String, onResult: (success: Boolean, message: String?) -> Unit) -> Unit,
+    onGoToSignUp: () -> Unit,
+    onGoToHome: () -> Unit
+) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
 
     val gradientColors = listOf(
-        Color(0xFFFFD580), // Light orange
-        Color(0xFFB3E5FC)  // Light blue
+        Color(0xFFFFD580),
+        Color(0xFFB3E5FC)
     )
+
+    fun attemptLogin() {
+        errorMessage = null
+
+        if (!isValidLogin(email, password)) {
+            errorMessage = "Please enter a valid email and password (min 6 chars)."
+            return
+        }
+
+        isLoading = true
+        onLogin(email, password) { success, message ->
+            isLoading = false
+            if (success) {
+                onGoToHome()
+            } else {
+                errorMessage = message ?: "Invalid email or password"
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -83,6 +132,7 @@ fun LoginScreen(onLoginClick: () -> Unit) {
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
+
                 Text(
                     text = "Sign in to continue your journey",
                     fontSize = 16.sp,
@@ -98,6 +148,7 @@ fun LoginScreen(onLoginClick: () -> Unit) {
                     label = { Text("Email Address") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading,
                     keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Next)
                 )
 
@@ -109,50 +160,44 @@ fun LoginScreen(onLoginClick: () -> Unit) {
                     label = { Text("Password") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = {
-                        if (isValidLogin(email, password)) {
-                            onLoginClick()
-                        } else {
-                            errorMessage = "Please enter a valid email and password"
-                        }
-                    })
+                    keyboardActions = KeyboardActions(onDone = { attemptLogin() })
                 )
 
                 errorMessage?.let {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = it,
-                        color = Color.Red,
-                        fontSize = 14.sp
-                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(text = it, color = Color.Red, fontSize = 14.sp)
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Button(
-                    onClick = {
-                        if (isValidLogin(email, password)) {
-                            onLoginClick()
-                        } else {
-                            errorMessage = "Invalid email or password"
-                        }
-                    },
+                    onClick = { attemptLogin() },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(50.dp),
+                    enabled = !isLoading,
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF0288D1)
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0288D1))
                 ) {
-                    Text(
-                        text = "Login",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White
-                    )
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("Logging in...", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    } else {
+                        Text(
+                            text = "Login",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -161,16 +206,13 @@ fun LoginScreen(onLoginClick: () -> Unit) {
                     text = "Don’t have an account? Sign up",
                     color = Color(0xFF01579B),
                     fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable {
-                        // TODO: Navigate to SignupActivity
-                    }
+                    modifier = Modifier.clickable(enabled = !isLoading) { onGoToSignUp() }
                 )
             }
         }
     }
 }
 
-// Simple validation
 fun isValidLogin(email: String, password: String): Boolean {
-    return Patterns.EMAIL_ADDRESS.matcher(email).matches() && password.length >= 6
+    return Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches() && password.length >= 6
 }
